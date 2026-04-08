@@ -104,9 +104,18 @@ function resolveCurrentUserCandidates(opts?: CurrentUserRedactionOptions) {
   return { userNames, homeDirs, replacement };
 }
 
+/** Quick check: skip expensive redaction on large chunks that are mostly base64 data. */
+function isLikelyBase64Data(input: string): boolean {
+  if (input.length < 50_000) return false;
+  // Sample a slice from the interior — base64 data has no path separators
+  const sample = input.slice(1000, 2000);
+  return !sample.includes("/") && !sample.includes("\\") && /^[A-Za-z0-9+/=\s]+$/.test(sample);
+}
+
 export function redactCurrentUserText(input: string, opts?: CurrentUserRedactionOptions) {
   if (!input) return input;
   if (opts?.enabled === false) return input;
+  if (isLikelyBase64Data(input)) return input;
 
   const { userNames, homeDirs, replacement } = resolveCurrentUserCandidates(opts);
   let result = input;

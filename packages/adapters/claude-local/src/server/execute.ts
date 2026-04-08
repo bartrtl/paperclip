@@ -25,6 +25,7 @@ import {
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+  IncrementalStreamCollector,
   parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
@@ -500,6 +501,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       });
     }
 
+    const collector = new IncrementalStreamCollector();
+    const wrappedOnLog = async (stream: "stdout" | "stderr", chunk: string) => {
+      if (stream === "stdout") {
+        collector.feed(chunk);
+      }
+      if (onLog) {
+        await onLog(stream, chunk);
+      }
+    };
+
     const proc = await runChildProcess(runId, command, args, {
       cwd,
       env,
@@ -507,10 +518,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       timeoutSec,
       graceSec,
       onSpawn,
-      onLog,
+      onLog: wrappedOnLog,
     });
+    collector.flush();
 
+    // Use post-hoc parse as primary, but fall back to incremental collector
+    // for session ID, model, cost, and usage when truncation loses early events.
     const parsedStream = parseClaudeStreamJson(proc.stdout);
+    if (!parsedStream.sessionId && collector.sessionId) {
+      parsedStream.sessionId = collector.sessionId;
+    }
+    if (!parsedStream.model && collector.model) {
+      parsedStream.model = collector.model;
+    }
+    if (parsedStream.costUsd == null && collector.costUsd != null) {
+      parsedStream.costUsd = collector.costUsd;
+    }
+    if (!parsedStream.usage && collector.usage) {
+      parsedStream.usage = collector.usage;
+    }
+    if (!parsedStream.resultJson && collector.finalResult) {
+      parsedStream.resultJson = collector.finalResult;
+    }
     const parsed = parsedStream.resultJson ?? parseJson(proc.stdout);
     return { proc, parsedStream, parsed };
   };

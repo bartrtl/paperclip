@@ -4,6 +4,72 @@ import { asString, asNumber, parseObject, parseJson } from "@paperclipai/adapter
 const CLAUDE_AUTH_REQUIRED_RE = /(?:not\s+logged\s+in|please\s+log\s+in|please\s+run\s+`?claude\s+login`?|login\s+required|requires\s+login|unauthorized|authentication\s+required)/i;
 const URL_RE = /(https?:\/\/[^\s'"`<>()[\]{};,!?]+[^\s'"`<>()[\]{};,!.?:]+)/gi;
 
+/**
+ * Incremental stream collector that extracts session ID, model, and cost from
+ * stream-json events as they arrive via stdout chunks. This survives stdout
+ * truncation because critical metadata (init event, result event) is captured
+ * in real-time rather than parsed post-hoc from a potentially truncated buffer.
+ */
+export class IncrementalStreamCollector {
+  sessionId: string | null = null;
+  model = "";
+  costUsd: number | null = null;
+  usage: UsageSummary | null = null;
+  finalResult: Record<string, unknown> | null = null;
+  private _buf = "";
+
+  /** Feed a raw stdout chunk. Extracts complete JSON lines and parses events. */
+  feed(chunk: string): void {
+    this._buf += chunk;
+    const lines = this._buf.split(/\r?\n/);
+    // Keep the last (possibly incomplete) line in the buffer
+    this._buf = lines.pop() ?? "";
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const event = parseJson(line);
+      if (!event) continue;
+      this._processEvent(event);
+    }
+  }
+
+  /** Flush any remaining buffered data (call after process exits). */
+  flush(): void {
+    const line = this._buf.trim();
+    this._buf = "";
+    if (!line) return;
+    const event = parseJson(line);
+    if (event) this._processEvent(event);
+  }
+
+  private _processEvent(event: Record<string, unknown>): void {
+    const type = asString(event.type, "");
+    if (type === "system" && asString(event.subtype, "") === "init") {
+      this.sessionId = asString(event.session_id, this.sessionId ?? "") || this.sessionId;
+      this.model = asString(event.model, this.model);
+      return;
+    }
+    if (type === "assistant") {
+      this.sessionId = asString(event.session_id, this.sessionId ?? "") || this.sessionId;
+      return;
+    }
+    if (type === "result") {
+      this.finalResult = event;
+      this.sessionId = asString(event.session_id, this.sessionId ?? "") || this.sessionId;
+      const costRaw = event.total_cost_usd;
+      if (typeof costRaw === "number" && Number.isFinite(costRaw)) {
+        this.costUsd = costRaw;
+      }
+      const usageObj = parseObject(event.usage);
+      this.usage = {
+        inputTokens: asNumber(usageObj.input_tokens, 0),
+        cachedInputTokens: asNumber(usageObj.cache_read_input_tokens, 0),
+        outputTokens: asNumber(usageObj.output_tokens, 0),
+      };
+    }
+  }
+}
+
 export function parseClaudeStreamJson(stdout: string) {
   let sessionId: string | null = null;
   let model = "";
