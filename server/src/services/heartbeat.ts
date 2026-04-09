@@ -1032,7 +1032,7 @@ function killOrphanedPid(pid: number | null | undefined, graceMs = 5_000) {
         process.kill(numPid, "SIGKILL");
       } catch { /* already gone */ }
     }
-  }, graceMs);
+  }, graceMs).unref();
 }
 
 function truncateDisplayId(value: string | null | undefined, max = 128) {
