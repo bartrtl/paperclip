@@ -25,18 +25,14 @@ export function healthRoutes(
 
   router.get("/", async (_req, res) => {
     if (!db) {
-      res.json({ status: "ok", version: serverVersion });
+      res.json({ status: "ok" });
       return;
     }
 
     try {
       await db.execute(sql`SELECT 1`);
     } catch {
-      res.status(503).json({
-        status: "unhealthy",
-        version: serverVersion,
-        error: "database_unreachable",
-      });
+      res.status(503).json({ status: "unhealthy" });
       return;
     }
 

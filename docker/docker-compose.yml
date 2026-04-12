@@ -16,6 +16,13 @@ services:
     #   - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
     deploy:
       resources:
         limits:
@@ -23,11 +30,12 @@ services:
           cpus: "1.0"
 
   server:
+    image: "${PAPERCLIP_IMAGE:-ghcr.io/bartrtl/paperclip:latest}"
     build:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "${PAPERCLIP_BIND_IP:-0.0.0.0}:3100:3100"
+      - "${PAPERCLIP_BIND_IP:-127.0.0.1}:3100:3100"
     environment:
       DATABASE_URL: "postgres://${POSTGRES_USER:-paperclip}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-paperclip}"
       HOST: "0.0.0.0"
@@ -50,6 +58,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     deploy:
       resources:
         limits:
